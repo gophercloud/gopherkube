@@ -762,6 +762,28 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: id
       type:
         scalar: string
+- name: com.github.k-orc.openstack-resource-controller.api.v1alpha1.PortRangeSpec
+  map:
+    fields:
+    - name: max
+      type:
+        scalar: numeric
+      default: 0
+    - name: min
+      type:
+        scalar: numeric
+      default: 0
+- name: com.github.k-orc.openstack-resource-controller.api.v1alpha1.PortRangeStatus
+  map:
+    fields:
+    - name: max
+      type:
+        scalar: numeric
+      default: 0
+    - name: min
+      type:
+        scalar: numeric
+      default: 0
 - name: com.github.k-orc.openstack-resource-controller.api.v1alpha1.PortResourceSpec
   map:
     fields:
@@ -1281,15 +1303,14 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: ethertype
       type:
         scalar: string
-    - name: portRangeMax
+      default: ""
+    - name: portRange
       type:
-        scalar: numeric
-    - name: portRangeMin
-      type:
-        scalar: numeric
+        namedType: com.github.k-orc.openstack-resource-controller.api.v1alpha1.PortRangeSpec
     - name: protocol
       type:
         scalar: string
+      default: ""
     - name: remoteIPPrefix
       type:
         scalar: string
@@ -1308,12 +1329,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: id
       type:
         scalar: string
-    - name: portRangeMax
+    - name: portRange
       type:
-        scalar: numeric
-    - name: portRangeMin
-      type:
-        scalar: numeric
+        namedType: com.github.k-orc.openstack-resource-controller.api.v1alpha1.PortRangeStatus
     - name: protocol
       type:
         scalar: string
