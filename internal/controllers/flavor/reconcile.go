@@ -23,18 +23,12 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	orcv1alpha1 "github.com/k-orc/openstack-resource-controller/api/v1alpha1"
-	"github.com/k-orc/openstack-resource-controller/internal/controllers/common"
 	"github.com/k-orc/openstack-resource-controller/internal/controllers/generic"
 	osclients "github.com/k-orc/openstack-resource-controller/internal/osclients"
-	"github.com/k-orc/openstack-resource-controller/internal/util/applyconfigs"
 	orcerrors "github.com/k-orc/openstack-resource-controller/internal/util/errors"
-	orcapplyconfigv1alpha1 "github.com/k-orc/openstack-resource-controller/pkg/clients/applyconfiguration/api/v1alpha1"
 )
 
 // +kubebuilder:rbac:groups=openstack.k-orc.cloud,resources=flavors,verbs=get;list;watch;create;update;patch;delete
@@ -61,18 +55,13 @@ func (r *orcFlavorReconciler) reconcileNormal(ctx context.Context, orcObject *or
 	log := ctrl.LoggerFrom(ctx)
 	log.V(3).Info("Reconciling resource")
 
-	var statusOpts []updateStatusOpt
-	addStatus := func(opt updateStatusOpt) {
-		statusOpts = append(statusOpts, opt)
-	}
+	statusWriter := flavorStatusWriter{}
+	var osResource *flavors.Flavor
+	var waitEvents []generic.WaitingOnEvent
 
 	// Ensure we always update status
 	defer func() {
-		if err != nil {
-			addStatus(withError(err))
-		}
-
-		err = errors.Join(err, r.updateStatus(ctx, orcObject, statusOpts...))
+		err = errors.Join(err, generic.UpdateStatus(ctx, r, statusWriter, orcObject, osResource, nil, waitEvents, err))
 
 		var terminalError *orcerrors.TerminalError
 		if errors.As(err, &terminalError) {
@@ -81,24 +70,18 @@ func (r *orcFlavorReconciler) reconcileNormal(ctx context.Context, orcObject *or
 		}
 	}()
 
-	if !controllerutil.ContainsFinalizer(orcObject, Finalizer) {
-		patch := common.SetFinalizerPatch(orcObject, Finalizer)
-		return ctrl.Result{}, r.client.Patch(ctx, orcObject, patch, client.ForceOwnership, ssaFieldOwner(SSAFinalizerTxn))
-	}
-
-	actuator, err := newActuator(ctx, r.client, r.scopeFactory, orcObject)
+	actuator, err := newActuator(ctx, r, orcObject)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	waitEvents, osResource, err := generic.GetOrCreateOSResource(ctx, log, r.client, actuator)
+	waitEvents, osResource, err = generic.GetOrCreateOSResource(ctx, log, r.client, actuator)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if len(waitEvents) > 0 {
 		log.V(3).Info("Waiting on events before creation")
-		addStatus(withProgressMessage(waitEvents[0].Message()))
 		return ctrl.Result{RequeueAfter: generic.MaxRequeue(waitEvents)}, nil
 	}
 
@@ -107,9 +90,8 @@ func (r *orcFlavorReconciler) reconcileNormal(ctx context.Context, orcObject *or
 		return ctrl.Result{}, fmt.Errorf("oResource is not set, but no wait events or error")
 	}
 
-	addStatus(withResource(osResource))
 	if orcObject.Status.ID == nil {
-		if err := r.setStatusID(ctx, orcObject, osResource.ID); err != nil {
+		if err := generic.SetStatusID(ctx, actuator, statusWriter, osResource); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -121,7 +103,6 @@ func (r *orcFlavorReconciler) reconcileNormal(ctx context.Context, orcObject *or
 	if orcObject.Spec.ManagementPolicy == orcv1alpha1.ManagementPolicyManaged {
 		for _, updateFunc := range needsUpdate(actuator.osClient, orcObject, osResource) {
 			if err := updateFunc(ctx); err != nil {
-				addStatus(withProgressMessage("Updating the OpenStack resource"))
 				return ctrl.Result{}, fmt.Errorf("failed to update the OpenStack resource: %w", err)
 			}
 		}
@@ -134,36 +115,25 @@ func (r *orcFlavorReconciler) reconcileDelete(ctx context.Context, orcObject *or
 	log := ctrl.LoggerFrom(ctx)
 	log.V(3).Info("Reconciling OpenStack resource delete")
 
-	var statusOpts []updateStatusOpt
-	addStatus := func(opt updateStatusOpt) {
-		statusOpts = append(statusOpts, opt)
-	}
+	statusWriter := flavorStatusWriter{}
+	var osResource *flavors.Flavor
+	var waitEvents []generic.WaitingOnEvent
 
 	deleted := false
 	defer func() {
 		// No point updating status after removing the finalizer
 		if !deleted {
-			if err != nil {
-				addStatus(withError(err))
-			}
-			err = errors.Join(err, r.updateStatus(ctx, orcObject, statusOpts...))
+			err = errors.Join(err, generic.UpdateStatus(ctx, r, statusWriter, orcObject, osResource, nil, waitEvents, err))
 		}
 	}()
 
-	actuator, err := newActuator(ctx, r.client, r.scopeFactory, orcObject)
+	actuator, err := newActuator(ctx, r, orcObject)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	osResource, result, err := generic.DeleteResource(ctx, log, actuator, func() error {
-		deleted = true
-
-		// Clear the finalizer
-		applyConfig := orcapplyconfigv1alpha1.Flavor(orcObject.Name, orcObject.Namespace).WithUID(orcObject.UID)
-		return r.client.Patch(ctx, orcObject, applyconfigs.Patch(types.ApplyPatchType, applyConfig), client.ForceOwnership, ssaFieldOwner(SSAFinalizerTxn))
-	})
-	addStatus(withResource(osResource))
-	return result, err
+	deleted, waitEvents, osResource, err = generic.DeleteResource(ctx, log, r.client, actuator)
+	return ctrl.Result{RequeueAfter: generic.MaxRequeue(waitEvents)}, err
 }
 
 // needsUpdate returns a slice of functions that call the OpenStack API to
