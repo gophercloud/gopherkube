@@ -26,10 +26,21 @@ E2E_KUTTL_TEST=${E2E_KUTTL_TEST:-}
 # Define a custom external network
 export E2E_EXTERNAL_NETWORK_NAME=${E2E_EXTERNAL_NETWORK_NAME:-private}
 
+export OS_CLOUD=devstack
+
+echo OpenStack Networks before running kuttl
+set -x
+openstack network list
+openstack subnet list
+set +x
+
 kubectl kuttl test $E2E_KUTTL_DIR --test "$E2E_KUTTL_TEST"
 
-# Now drop admin privileges
-export OS_CLOUD=devstack
+echo OpenStack Networks after running kuttl
+set -x
+openstack network list
+openstack subnet list
+set +x
 
 cd examples
 
