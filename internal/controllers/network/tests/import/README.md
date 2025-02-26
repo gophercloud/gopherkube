@@ -10,7 +10,8 @@ Create a network matching the filter and verify that the observed status on the 
 
 ## Step 02
 
-Delete the created network and verify that the imported network is not available
+Create a network matching the filter and verify that the observed status on the imported network corresponds to the spec of the created network.
+Also verify that the created network didn't adopt the one which name is a superstring of it.
 
 ## Step 03
 
