@@ -1,5 +1,6 @@
-apiVersion: kuttl.dev/v1beta1
-kind: TestAssert
-commands:
-- script: "! kubectl get flavor create-minimal --namespace $NAMESPACE"
-  skipLogOutput: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openstack-clouds
+  deletionGracePeriodSeconds: 0
